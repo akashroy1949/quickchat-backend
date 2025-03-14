@@ -7,15 +7,14 @@ const router = express.Router();
 
 /**
  * @route   GET /api/user/getProfile
- * @desc    Fetch the authenticated user's profile details
+ * @desc    Fetch authenticated user's profile details
  * @access  Private (requires a valid JWT token)
  */
 router.get("/getProfile", protect, getUserProfile);
 
 /**
  * @route   PUT /api/user/updateProfile
- * @desc    Update the authenticated user's profile details.
- *          Supports profile image upload via multer middleware.
+ * @desc    Update authenticated user's profile details (supports profile image upload)
  * @access  Private (requires a valid JWT token)
  */
 router.put("/updateProfile", protect, upload.single("profileImage"), updateUserProfile);
