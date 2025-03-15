@@ -4,12 +4,12 @@ const cloudinary = require("cloudinary").v2;
 const dotenv = require("dotenv");
 dotenv.config();
 
-// Configure Cloudinary with your credentials from the .env file
+// Configure Cloudinary with credentials from .env
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true
+    secure: true,
 });
 
 /**
@@ -23,34 +23,46 @@ cloudinary.config({
  * - isEphemeral: (Optional) "true" if the photo should be one-time view.
  *
  * If a file is attached via multipart/form-data (field name "photo"),
- * it will be uploaded to Cloudinary and its URL saved in the message.
+ * it will be uploaded to Cloudinary and its URL and public_id saved in the message.
  */
 exports.sendMessage = async (req, res) => {
     try {
-        // Extract values from the request body
         const { receiver, content, isEphemeral } = req.body;
 
-        // Validate: require a receiver and either text or a file (photo)
+        // Validate required fields: receiver must be provided and either content or a photo file must be provided.
         if (!receiver || (!content && !req.file)) {
             return res.status(400).json({ message: "Receiver and either text content or a photo are required." });
         }
 
-        let imageUrl = null;
-
-        // If a file is attached, upload it to Cloudinary
-        if (req.file) {
-            const result = await cloudinary.uploader.upload(req.file.path);
-            imageUrl = result.secure_url;
+        // Validate that receiver is a valid ObjectId
+        // If the receiver ID is not a valid ObjectId, return a 400 Bad Request response
+        if (!mongoose.Types.ObjectId.isValid(receiver)) {
+            return res.status(400).json({ message: "Invalid receiver ID format." });
         }
 
-        // Prepare the message object.
-        // Note: isEphemeral is converted to a boolean.
+        let imageUrl = null;
+        let publicId = null;
+
+        // If a photo is attached, upload it to Cloudinary.
+        if (req.file) {
+            try {
+                const result = await cloudinary.uploader.upload(req.file.path);
+                imageUrl = result.secure_url;
+                publicId = result.public_id;
+            } catch (uploadError) {
+                console.error("Cloudinary upload error:", uploadError);
+                return res.status(500).json({ message: "Error uploading photo.", error: uploadError.message });
+            }
+        }
+
+        // Prepare message data
         const messageData = {
-            sender: req.user._id, // Authenticated user ID from the protect middleware
+            sender: req.user._id, // Authenticated user's ID from the protect middleware
             receiver,
             content: content || "",
             image: imageUrl,
-            isEphemeral: isEphemeral === "true" || isEphemeral === true, // Accept string "true" or boolean true
+            publicId: publicId,
+            isEphemeral: (isEphemeral === "true" || isEphemeral === true),
             ephemeralViewed: false,
         };
 
@@ -58,10 +70,10 @@ exports.sendMessage = async (req, res) => {
         const message = new Message(messageData);
         await message.save();
 
-        res.status(201).json({ message: "Message sent successfully", data: message });
+        return res.status(201).json({ message: "Message sent successfully", data: message });
     } catch (error) {
         console.error("Error in sendMessage:", error);
-        res.status(500).json({ message: "Server Error", error: error.message });
+        return res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
 
@@ -71,15 +83,22 @@ exports.sendMessage = async (req, res) => {
  * @access  Private
  *
  * Returns messages where the authenticated user is either the sender or receiver.
- * For ephemeral photo messages that have been viewed, the image URL is removed.
+ * For ephemeral photo messages that have been marked as viewed by the receiver, the image URL is removed.
  */
 exports.getMessages = async (req, res) => {
     try {
-        // Convert IDs to ObjectId using their string forms
-        const otherUserId = new mongoose.Types.ObjectId(req.params.userId.toString());
+        const partnerIdParam = req.params.userId;
+
+        // Validate the provided partner user ID
+        if (!mongoose.Types.ObjectId.isValid(partnerIdParam)) {
+            return res.status(400).json({ message: "Invalid user ID provided in URL." });
+        }
+
+        // Convert IDs to ObjectId instances using string conversion
+        const otherUserId = new mongoose.Types.ObjectId(partnerIdParam.toString());
         const authenticatedUserId = new mongoose.Types.ObjectId(req.user._id.toString());
 
-        // Query messages where either user is sender/receiver
+        // Query for messages exchanged between the two users
         const messages = await Message.find({
             $or: [
                 { sender: authenticatedUserId, receiver: otherUserId },
@@ -87,53 +106,84 @@ exports.getMessages = async (req, res) => {
             ],
         }).sort({ createdAt: 1 }); // Sort by creation time (oldest first)
 
-        // For ephemeral photo messages that have been viewed, remove the image URL from the response
+        // If no messages found, return a friendly message along with an empty array
+        if (!messages || messages.length === 0) {
+            return res.status(200).json({ message: "No chat history found.", messages: [] });
+        }
+
+        // Process messages: if an ephemeral message has been marked as viewed,
+        // remove the image URL for both sender and receiver.
         const sanitizedMessages = messages.map(msg => {
-            if (msg.isEphemeral && msg.ephemeralViewed) {
-                // Create a copy of the message object and remove image URL
-                const msgObj = msg.toObject();
+            const msgObj = msg.toObject();
+            if (msgObj.isEphemeral && msgObj.ephemeralViewed) {
                 msgObj.image = null;
-                return msgObj;
             }
-            return msg;
+            return msgObj;
         });
 
-        res.status(200).json({ messages: sanitizedMessages });
+        return res.status(200).json({ messages: sanitizedMessages });
     } catch (error) {
         console.error("Error fetching chat history:", error);
-        res.status(500).json({ message: "Server Error", error: error.message });
+        return res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
 
 /**
- * @desc    Mark an ephemeral photo as viewed
+ * @desc    Mark an ephemeral photo as viewed by the receiver.
+ *          Once viewed, delete the image from Cloudinary and remove the image URL and publicId from the message.
  * @route   PUT /api/messages/markEphemeral/:messageId
  * @access  Private
- *
- * Once the recipient opens the ephemeral photo, call this endpoint
- * to mark it as viewed so that the image URL is hidden (one-time view).
  */
 exports.markEphemeralAsViewed = async (req, res) => {
     try {
-        const messageId = req.params.messageId;
-        const message = await Message.findById(messageId);
+        const { messageId } = req.params;
 
-        if (!message) {
-            return res.status(404).json({ message: "Message not found" });
+        // Validate the message ID
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ message: "Invalid message ID provided." });
         }
 
-        // Ensure this message is marked as ephemeral
+        const message = await Message.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ message: "Message not found." });
+        }
+
+        // Only allow the receiver to mark the photo as viewed
+        if (message.receiver.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: "Only the receiver can mark this photo as viewed." });
+        }
+
+        // Ensure the message is marked as ephemeral
         if (!message.isEphemeral) {
             return res.status(400).json({ message: "This message is not marked as ephemeral." });
         }
 
-        // Mark the ephemeral photo as viewed
+        // If already marked as viewed, return a message
+        if (message.ephemeralViewed) {
+            return res.status(200).json({ message: "Ephemeral photo already marked as viewed." });
+        }
+
+        // Mark the message as viewed
         message.ephemeralViewed = true;
+
+        // Delete the image from Cloudinary if publicId exists
+        if (message.publicId) {
+            try {
+                await cloudinary.uploader.destroy(message.publicId);
+            } catch (cloudError) {
+                console.error("Error deleting image from Cloudinary:", cloudError);
+                return res.status(500).json({ message: "Error deleting photo from storage.", error: cloudError.message });
+            }
+        }
+
+        // Remove image URL and publicId from the message document
+        message.image = null;
+        message.publicId = null;
         await message.save();
 
-        res.status(200).json({ message: "Ephemeral photo marked as viewed." });
+        return res.status(200).json({ message: "Ephemeral photo marked as viewed and removed." });
     } catch (error) {
         console.error("Error marking ephemeral photo as viewed:", error);
-        res.status(500).json({ message: "Server Error", error: error.message });
+        return res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
