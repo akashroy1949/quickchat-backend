@@ -6,6 +6,7 @@ const { Server } = require("socket.io");
 const http = require("http");
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
+const messageRoutes = require("./routes/messageRoutes");
 
 // Load environment variables
 dotenv.config();
@@ -27,6 +28,9 @@ app.use("/api/auth", authRoutes);
 
 // User Routes
 app.use("/api/user", userRoutes);
+
+// Message Routes
+app.use("/api/messages", messageRoutes);
 
 // Database Connection
 mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ MongoDB Connected"))
