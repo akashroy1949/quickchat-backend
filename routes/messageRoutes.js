@@ -9,10 +9,6 @@ const router = express.Router();
  * @route   POST /api/messages
  * @desc    Send a new message (text and/or photo)
  * @access  Private
- *
- * Use this endpoint with form-data if sending a photo:
- * - Field "photo": the file
- * - Other fields: receiver, content (optional), isEphemeral (optional)
  */
 router.post("/", protect, upload.single("photo"), sendMessage);
 
@@ -25,7 +21,8 @@ router.get("/:userId", protect, getMessages);
 
 /**
  * @route   PUT /api/messages/markEphemeral/:messageId
- * @desc    Mark an ephemeral photo as viewed so that it won't be shown again
+ * @desc    Mark an ephemeral photo as viewed (receiver only),
+ *          delete the image from Cloudinary, and remove it from the message.
  * @access  Private
  */
 router.put("/markEphemeral/:messageId", protect, markEphemeralAsViewed);
