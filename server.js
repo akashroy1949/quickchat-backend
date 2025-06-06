@@ -4,6 +4,7 @@ const http = require("http");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const path = require("path");
 dotenv.config();
 
 const app = express();
@@ -27,6 +28,9 @@ const messageRoutes = require("./routes/messageRoutes");
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
 app.use("/api/messages", messageRoutes);
+
+// Serve uploaded files statically
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // 4. Create HTTP server and attach Socket.io
 const server = http.createServer(app);

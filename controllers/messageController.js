@@ -1,16 +1,9 @@
 const mongoose = require("mongoose");
 const Message = require("../models/Message");
-const cloudinary = require("cloudinary").v2;
+const fs = require("fs");
+const path = require("path");
 const dotenv = require("dotenv");
 dotenv.config();
-
-// Configure Cloudinary with credentials from .env
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-});
 
 /**
  * @desc    Send a new message (text and/or photo)
@@ -41,18 +34,10 @@ exports.sendMessage = async (req, res) => {
         }
 
         let imageUrl = null;
-        let publicId = null;
 
-        // If a photo is attached, upload it to Cloudinary.
+        // If a photo is attached, save it locally
         if (req.file) {
-            try {
-                const result = await cloudinary.uploader.upload(req.file.path);
-                imageUrl = result.secure_url;
-                publicId = result.public_id;
-            } catch (uploadError) {
-                console.error("Cloudinary upload error:", uploadError);
-                return res.status(500).json({ message: "Error uploading photo.", error: uploadError.message });
-            }
+            imageUrl = `/uploads/${req.file.filename}`;
         }
 
         // Prepare message data
@@ -61,7 +46,7 @@ exports.sendMessage = async (req, res) => {
             receiver,
             content: content || "",
             image: imageUrl,
-            publicId: publicId,
+            publicId: null, // No publicId for local storage
             isEphemeral: (isEphemeral === "true" || isEphemeral === true),
             ephemeralViewed: false,
         };
@@ -166,13 +151,11 @@ exports.markEphemeralAsViewed = async (req, res) => {
         // Mark the message as viewed
         message.ephemeralViewed = true;
 
-        // Delete the image from Cloudinary if publicId exists
-        if (message.publicId) {
-            try {
-                await cloudinary.uploader.destroy(message.publicId);
-            } catch (cloudError) {
-                console.error("Error deleting image from Cloudinary:", cloudError);
-                return res.status(500).json({ message: "Error deleting photo from storage.", error: cloudError.message });
+        // Delete the image from local storage if it exists
+        if (message.image) {
+            const imagePath = path.join(__dirname, "..", message.image);
+            if (fs.existsSync(imagePath)) {
+                fs.unlinkSync(imagePath);
             }
         }
 
