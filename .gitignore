@@ -3,3 +3,6 @@ node_modules/
 .qodo
 uploads/
 mongo-data/
+
+# package lock file
+package-lock.json
