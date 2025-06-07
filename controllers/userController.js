@@ -1,5 +1,4 @@
 const User = require("../models/User");
-const cloudinary = require("cloudinary").v2;
 
 /**
  * @desc    Get authenticated user's profile
@@ -30,10 +29,9 @@ exports.updateUserProfile = async (req, res) => {
         const { name, email } = req.body;
         let updatedData = { name, email };
 
-        // If a new profile image is uploaded, upload it to Cloudinary
+        // If a new profile image is uploaded, handle the file locally
         if (req.file) {
-            const result = await cloudinary.uploader.upload(req.file.path);
-            updatedData.profileImage = result.secure_url;
+            updatedData.profileImage = `/uploads/${req.file.filename}`;
         }
 
         // Use req.user._id from JWT instead of req.params.id

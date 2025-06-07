@@ -46,7 +46,6 @@ exports.sendMessage = async (req, res) => {
             receiver,
             content: content || "",
             image: imageUrl,
-            publicId: null, // No publicId for local storage
             isEphemeral: (isEphemeral === "true" || isEphemeral === true),
             ephemeralViewed: false,
         };
@@ -81,7 +80,7 @@ exports.getMessages = async (req, res) => {
 
         // Convert IDs to ObjectId instances using string conversion
         const otherUserId = new mongoose.Types.ObjectId(partnerIdParam.toString());
-        const authenticatedUserId = new mongoose.Types.ObjectId(req.user._id.toString());
+        const authenticatedUserId = new mongoose.Types.ObjectId(req.user._id);
 
         // Query for messages exchanged between the two users
         const messages = await Message.find({
@@ -151,17 +150,8 @@ exports.markEphemeralAsViewed = async (req, res) => {
         // Mark the message as viewed
         message.ephemeralViewed = true;
 
-        // Delete the image from local storage if it exists
-        if (message.image) {
-            const imagePath = path.join(__dirname, "..", message.image);
-            if (fs.existsSync(imagePath)) {
-                fs.unlinkSync(imagePath);
-            }
-        }
-
         // Remove image URL and publicId from the message document
         message.image = null;
-        message.publicId = null;
         await message.save();
 
         return res.status(200).json({ message: "Ephemeral photo marked as viewed and removed." });
