@@ -4,12 +4,23 @@ const http = require("http");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const compression = require("compression");
+const helmet = require("helmet"); // Optional: comment out if not needed
 const path = require("path");
 dotenv.config();
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(compression()); // Enable gzip compression for responses
+// app.use(helmet()); // Uncomment for security headers in production
+
+// Optimized CORS: allow all origins, credentials, and common headers
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
 
 // 1. Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
@@ -34,13 +45,23 @@ app.use('/api/uploads', uploadRoutes);
 // Serve uploaded files statically
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
+// Health check endpoint
+app.get("/ping", (req, res) => {
+  // Get client IP, considering proxy headers
+  const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  res.status(200).json({ status: "ok", message: `Pinged`, from: clientIp });
+  console.log(`Pinged from ${clientIp} at ${new Date().toISOString()}`);
+});
+
 // 4. Create HTTP server and attach Socket.io
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server, {
   cors: {
-    origin: "*", // Adjust in production for security
-    methods: ["GET", "POST"]
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
   }
 });
 
