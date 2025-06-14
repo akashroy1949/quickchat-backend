@@ -7,7 +7,6 @@ const cors = require("cors");
 const compression = require("compression");
 const socketHandler = require("./sockets/socketHandler");
 const { nullOrEmpty } = require("./utils/utils,js");
-// const helmet = require("helmet"); // Optional: comment out if not needed
 const path = require("path");
 dotenv.config();
 
@@ -22,9 +21,26 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS configuration: allow only your tunnel domain
+// Parse allowed origins from env (comma-separated or JSON array)
+let allowedOrigins = process.env.FRONTEND_URL;
+try {
+  allowedOrigins = JSON.parse(allowedOrigins);
+  if (!Array.isArray(allowedOrigins)) throw new Error();
+} catch {
+  allowedOrigins = allowedOrigins.split(',').map(item => item.trim());
+}
+
+// CORS configuration: allow multiple origins
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "https://your-tunnel-domain.com", // Set this to your tunnel domain
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
@@ -32,13 +48,11 @@ app.use(cors({
 
 // Strict Origin check middleware (blocks disallowed origins)
 app.use((req, res, next) => {
-  const allowedOrigin = process.env.FRONTEND_URL || "https://your-tunnel-domain.com";
   const requestOrigin = req.headers.origin;
-  // Allow requests with no Origin (e.g., curl, Postman, server-to-server), or only allow specific origin
-  if ((requestOrigin && (requestOrigin !== allowedOrigin)) || nullOrEmpty.includes(requestOrigin)) {
-    return res.status(403).json({ error: "Forbidden: Origin not allowed" });
+  if (!requestOrigin || allowedOrigins.includes(requestOrigin)) {
+    return next();
   }
-  next();
+  return res.status(403).json({ error: "Forbidden: Origin not allowed" });
 });
 
 // 1. Connect to MongoDB
