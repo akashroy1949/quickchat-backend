@@ -13,7 +13,6 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 app.use(compression()); // Enable gzip compression for responses
-// app.use(helmet()); // Uncomment for security headers in production
 
 // Log the Origin header for every request
 app.use((req, res, next) => {

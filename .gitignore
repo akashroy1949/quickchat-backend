@@ -3,6 +3,7 @@ node_modules/
 .qodo
 uploads/
 mongo-data/
+.vscode/
 
 # package lock file
 package-lock.json
