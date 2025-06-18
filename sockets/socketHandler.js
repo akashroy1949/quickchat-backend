@@ -7,6 +7,8 @@
 module.exports = (io) => {
     // In-memory map to track connected users by their userId
     const connectedUsers = {};
+    // Reverse map to track userId by socket id for O(1) removal
+    const socketToUserId = {};
 
     io.on("connection", (socket) => {
         console.log(`Socket connected: ${socket.id}`);
@@ -18,13 +20,14 @@ module.exports = (io) => {
                 return;
             }
             connectedUsers[userId] = socket.id;
+            socketToUserId[socket.id] = userId;
             console.log(`User connected: ${userId}, socket id: ${socket.id}`);
         });
 
         // Handle sending messages
         socket.on("sendMessage", (data) => {
             try {
-                if (!data || !data.sender || !data.receiver || !data.content) {
+                if (!(data?.sender && data?.receiver && data?.content)) {
                     console.error("Invalid sendMessage data received:", data);
                     return;
                 }
@@ -43,7 +46,7 @@ module.exports = (io) => {
         // Handle typing events
         socket.on("typing", (data) => {
             try {
-                if (!data || !data.sender || !data.receiver) {
+                if (!(data?.sender && data?.receiver)) {
                     console.error("Invalid typing data received:", data);
                     return;
                 }
@@ -59,7 +62,7 @@ module.exports = (io) => {
         // Handle stop typing events
         socket.on("stopTyping", (data) => {
             try {
-                if (!data || !data.sender || !data.receiver) {
+                if (!(data?.sender && data?.receiver)) {
                     console.error("Invalid stopTyping data received:", data);
                     return;
                 }
@@ -75,12 +78,11 @@ module.exports = (io) => {
         // Handle socket disconnect
         socket.on("disconnect", (reason) => {
             console.log(`Socket disconnected: ${socket.id}, Reason: ${reason}`);
-            for (const userId in connectedUsers) {
-                if (connectedUsers[userId] === socket.id) {
-                    console.log(`Removing user ${userId} from connected users.`);
-                    delete connectedUsers[userId];
-                    break;
-                }
+            const userId = socketToUserId[socket.id];
+            if (userId) {
+                console.log(`Removing user ${userId} from connected users.`);
+                delete connectedUsers[userId];
+                delete socketToUserId[socket.id];
             }
         });
 
