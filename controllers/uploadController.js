@@ -13,4 +13,32 @@ const saveFileMetadata = async (file) => {
     return await metadata.save();
 };
 
-module.exports = { saveFileMetadata };
+/**
+ * @desc    Upload a single file
+ * @route   POST /api/uploads/file
+ * @access  Private
+ */
+const uploadFile = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No file uploaded' });
+        }
+
+        const fileUrl = `/uploads/${req.file.filename}`;
+        const metadata = await saveFileMetadata(req.file);
+
+        res.status(200).json({
+            message: 'File uploaded successfully',
+            fileUrl,
+            fileName: req.file.originalname,
+            fileSize: req.file.size,
+            fileType: req.file.mimetype,
+            metadata
+        });
+    } catch (error) {
+        console.error('Error uploading file:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+module.exports = { saveFileMetadata, uploadFile };
