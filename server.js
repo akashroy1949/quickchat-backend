@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const compression = require("compression");
 const socketHandler = require("./sockets/socketHandler");
-const { nullOrEmpty } = require("./utils/utils,js");
+// const { nullOrEmpty } = require("./utils/utils.js"); // Commented out as it's not used
 const path = require("path");
 dotenv.config();
 
@@ -66,12 +66,16 @@ mongoose.connect(process.env.MONGO_URI)
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
 const messageRoutes = require("./routes/messageRoutes");
+const conversationRoutes = require("./routes/conversationRoutes");
 const uploadRoutes = require('./routes/uploadRoutes');
 
 // 3. Mount API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/user", userRoutes);
+app.use("/api/users", userRoutes); // Alternative endpoint for users
 app.use("/api/messages", messageRoutes);
+app.use("/api/conversations", conversationRoutes);
+app.use("/api/chats", conversationRoutes); // Alternative endpoint for chats
 app.use('/api/uploads', uploadRoutes);
 
 // Serve uploaded files statically

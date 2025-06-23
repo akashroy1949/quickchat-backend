@@ -1,7 +1,8 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const { saveFileMetadata } = require('../controllers/uploadController');
+const { saveFileMetadata, uploadFile } = require('../controllers/uploadController');
+const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
@@ -16,9 +17,32 @@ const storage = multer.diskStorage({
     },
 });
 
-const upload = multer({ storage });
+const upload = multer({ 
+    storage,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        // Allow all file types for now, but you can add restrictions here
+        cb(null, true);
+    }
+});
 
-// Route to handle multiple file uploads
+/**
+ * @route   POST /api/uploads/file
+ * @desc    Upload a single file and return URL
+ * @access  Private
+ */
+router.post('/file', protect, upload.single('file'), uploadFile);
+
+/**
+ * @route   POST /api/uploads
+ * @desc    Upload a single file and return URL (alternative endpoint)
+ * @access  Private
+ */
+router.post('/', protect, upload.single('file'), uploadFile);
+
+// Route to handle multiple file uploads (existing functionality)
 router.post('/upload', upload.array('files', 10), async (req, res) => {
     try {
         const files = req.files;
@@ -26,11 +50,20 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
             return res.status(400).json({ message: 'No files uploaded' });
         }
 
-        // Save metadata to MongoDB
-        const metadataPromises = files.map(file => saveFileMetadata(file));
-        const metadata = await Promise.all(metadataPromises);
+        // Save metadata to MongoDB and return file URLs
+        const metadataPromises = files.map(async (file) => {
+            const metadata = await saveFileMetadata(file);
+            return {
+                ...metadata.toObject(),
+                fileUrl: `/uploads/${file.filename}`
+            };
+        });
+        const results = await Promise.all(metadataPromises);
 
-        res.status(200).json({ message: 'Files uploaded successfully', metadata });
+        res.status(200).json({ 
+            message: 'Files uploaded successfully', 
+            files: results 
+        });
     } catch (error) {
         console.error('Error uploading files:', error);
         res.status(500).json({ message: 'Internal server error' });
