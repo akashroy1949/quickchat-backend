@@ -14,7 +14,10 @@ const messageSchema = new mongoose.Schema(
         fileSize: { type: Number, default: null }, // File size in bytes
         fileType: { type: String, default: null }, // MIME type
         publicId: { type: String, default: null },  // Cloudinary public ID for the uploaded image
-        isSeen: { type: Boolean, default: false },  // Tracks if the message has been read (for dot notifications)
+        delivered: { type: Boolean, default: false }, // Tracks if the message has been delivered
+        deliveredAt: { type: Date },                 // When the message was delivered
+        seen: { type: Boolean, default: false },     // Tracks if the message has been seen
+        seenAt: { type: Date },                     // When the message was seen
         seenBy: [{ // For group chats - track who has seen the message
             user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
             seenAt: { type: Date, default: Date.now }
