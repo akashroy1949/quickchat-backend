@@ -4,7 +4,9 @@
  * It uses an in-memory object to track connected users and supports both direct and group messaging.
  */
 
+const Message = require("../models/Message");
 const Conversation = require("../models/Conversation");
+const { addUserSocket, removeUserSocket, getUserSocket, userSockets } = require("./userSocketManager");
 
 module.exports = (io) => {
     // In-memory map to track connected users by their userId
@@ -23,7 +25,131 @@ module.exports = (io) => {
             }
             connectedUsers[userId] = socket.id;
             socketToUserId[socket.id] = userId;
+            addUserSocket(userId, socket.id);
             console.log(`User connected: ${userId}, socket id: ${socket.id}`);
+        });
+
+        // Handle message delivered event
+        socket.on('messageDelivered', async ({ conversationId, messageIds, deliveredToUserId }) => {
+            try {
+                if (!conversationId || !messageIds || !deliveredToUserId) {
+                    console.error('Invalid messageDelivered data:', { conversationId, messageIds, deliveredToUserId });
+                    return;
+                }
+
+                console.log('Marking messages as delivered:', { conversationId, messageIds, deliveredToUserId });
+
+                // Update messages in database
+                await Message.updateMany(
+                    {
+                        _id: { $in: messageIds },
+                        conversation: conversationId,
+                        delivered: false // Only update if not already delivered
+                    },
+                    {
+                        delivered: true,
+                        deliveredAt: new Date()
+                    }
+                );
+
+                // Emit to message senders (not the user who marked it as delivered)
+                const messages = await Message.find({
+                    _id: { $in: messageIds },
+                    conversation: conversationId
+                }).populate('sender');
+
+                // Group messages by sender and emit to each sender
+                const senderGroups = {};
+                messages.forEach(msg => {
+                    const senderId = msg.sender._id.toString();
+                    if (senderId !== deliveredToUserId) { // Don't send to the user who marked it delivered
+                        if (!senderGroups[senderId]) {
+                            senderGroups[senderId] = [];
+                        }
+                        senderGroups[senderId].push(msg._id);
+                    }
+                });
+
+                // Emit to each sender
+                Object.keys(senderGroups).forEach(senderId => {
+                    const senderSocket = getUserSocket(senderId, io);
+                    if (senderSocket) {
+                        senderSocket.emit('messageDelivered', {
+                            conversationId,
+                            messageIds: senderGroups[senderId],
+                            deliveredToUserId
+                        });
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error marking messages as delivered:', error);
+            }
+        });
+
+        // Handle message seen event
+        socket.on('messageSeen', async ({ conversationId, seenByUserId, messageIds }) => {
+            try {
+                if (!conversationId || !messageIds || !seenByUserId) {
+                    console.error('Invalid messageSeen data:', { conversationId, messageIds, seenByUserId });
+                    return;
+                }
+
+                console.log('Marking messages as seen:', { conversationId, seenByUserId, messageIds });
+
+                // Update messages in database
+                await Message.updateMany(
+                    {
+                        _id: { $in: messageIds },
+                        conversation: conversationId,
+                        seen: false // Only update if not already seen
+                    },
+                    {
+                        seen: true,
+                        delivered: true, // If seen, it must be delivered
+                        seenAt: new Date(),
+                        $addToSet: { // Add to seenBy array if not already present
+                            seenBy: {
+                                user: seenByUserId,
+                                seenAt: new Date()
+                            }
+                        }
+                    }
+                );
+
+                // Emit to message senders (not the user who marked it as seen)
+                const messages = await Message.find({
+                    _id: { $in: messageIds },
+                    conversation: conversationId
+                }).populate('sender');
+
+                // Group messages by sender and emit to each sender
+                const senderGroups = {};
+                messages.forEach(msg => {
+                    const senderId = msg.sender._id.toString();
+                    if (senderId !== seenByUserId) { // Don't send to the user who marked it seen
+                        if (!senderGroups[senderId]) {
+                            senderGroups[senderId] = [];
+                        }
+                        senderGroups[senderId].push(msg._id);
+                    }
+                });
+
+                // Emit to each sender
+                Object.keys(senderGroups).forEach(senderId => {
+                    const senderSocket = getUserSocket(senderId, io);
+                    if (senderSocket) {
+                        senderSocket.emit('messageSeen', {
+                            conversationId,
+                            messageIds: senderGroups[senderId],
+                            seenByUserId
+                        });
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error marking messages as seen:', error);
+            }
         });
 
         // Join conversation rooms
@@ -95,7 +221,7 @@ module.exports = (io) => {
                     console.error("Invalid typing data received:", data);
                     return;
                 }
-                socket.to(data.conversationId).emit("typing", { 
+                socket.to(data.conversationId).emit("typing", {
                     sender: data.sender,
                     conversationId: data.conversationId
                 });
@@ -111,7 +237,7 @@ module.exports = (io) => {
                     console.error("Invalid stopTyping data received:", data);
                     return;
                 }
-                socket.to(data.conversationId).emit("stopTyping", { 
+                socket.to(data.conversationId).emit("stopTyping", {
                     sender: data.sender,
                     conversationId: data.conversationId
                 });
@@ -152,23 +278,6 @@ module.exports = (io) => {
             }
         });
 
-        // Handle message seen events
-        socket.on("messageSeen", (data) => {
-            try {
-                if (!(data?.conversationId && data?.userId)) {
-                    console.error("Invalid messageSeen data received:", data);
-                    return;
-                }
-                socket.to(data.conversationId).emit("messageSeen", {
-                    conversationId: data.conversationId,
-                    userId: data.userId,
-                    messageIds: data.messageIds
-                });
-            } catch (err) {
-                console.error("Error in messageSeen event handler:", err);
-            }
-        });
-
         // Handle socket disconnect
         socket.on("disconnect", (reason) => {
             console.log(`Socket disconnected: ${socket.id}, Reason: ${reason}`);
@@ -177,6 +286,7 @@ module.exports = (io) => {
                 console.log(`Removing user ${userId} from connected users.`);
                 delete connectedUsers[userId];
                 delete socketToUserId[socket.id];
+                removeUserSocket(userId, socket.id);
             }
         });
 
