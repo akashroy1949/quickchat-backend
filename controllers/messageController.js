@@ -19,14 +19,14 @@ exports.sendMessage = async (req, res) => {
 
         // Validate required fields
         if (!conversationId && !receiver) {
-            return res.status(400).json({ 
-                message: "Either conversationId or receiver is required" 
+            return res.status(400).json({
+                message: "Either conversationId or receiver is required"
             });
         }
 
         if (!content && !req.file) {
-            return res.status(400).json({ 
-                message: "Either text content or a file is required" 
+            return res.status(400).json({
+                message: "Either text content or a file is required"
             });
         }
 
@@ -78,7 +78,7 @@ exports.sendMessage = async (req, res) => {
         if (req.file) {
             const fileExtension = path.extname(req.file.originalname).toLowerCase();
             const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-            
+
             if (imageExtensions.includes(fileExtension)) {
                 imageUrl = `/uploads/${req.file.filename}`;
             } else {
@@ -117,9 +117,9 @@ exports.sendMessage = async (req, res) => {
         const populatedMessage = await Message.findById(message._id)
             .populate('sender', 'name email profileImage');
 
-        return res.status(201).json({ 
-            message: "Message sent successfully", 
-            data: populatedMessage 
+        return res.status(201).json({
+            message: "Message sent successfully",
+            data: populatedMessage
         });
     } catch (error) {
         console.error("Error in sendMessage:", error);
@@ -169,8 +169,8 @@ exports.getMessages = async (req, res) => {
                 return res.status(200).json({ message: "No conversation found", messages: [] });
             }
         } else {
-            return res.status(400).json({ 
-                message: "Either conversationId, chatId, or userId parameter is required" 
+            return res.status(400).json({
+                message: "Either conversationId, chatId, or userId parameter is required"
             });
         }
 
@@ -178,20 +178,31 @@ exports.getMessages = async (req, res) => {
         const messages = await Message.find({
             conversation: conversation._id
         })
-        .populate('sender', 'name email profileImage')
-        .sort({ createdAt: 1 });
+            .populate('sender', 'name email')
+            .sort({ createdAt: 1 });
 
-        // Process messages: if an ephemeral message has been marked as viewed,
-        // remove the image URL for both sender and receiver.
-        const sanitizedMessages = messages.map(msg => {
-            const msgObj = msg.toObject();
-            if (msgObj.isEphemeral && msgObj.ephemeralViewed) {
-                msgObj.image = null;
-            }
-            return msgObj;
+        // Return messages with delivery and seen status
+        res.json({
+            success: true,
+            messages: messages.map(msg => ({
+                _id: msg._id,
+                content: msg.content,
+                sender: msg.sender,
+                conversation: msg.conversation,
+                image: msg.image,
+                file: msg.file,
+                fileName: msg.fileName,
+                fileSize: msg.fileSize,
+                fileType: msg.fileType,
+                publicId: msg.publicId,
+                delivered: msg.delivered,
+                deliveredAt: msg.deliveredAt,
+                seen: msg.seen,
+                seenAt: msg.seenAt,
+                seenBy: msg.seenBy,
+                createdAt: msg.createdAt
+            }))
         });
-
-        return res.status(200).json({ messages: sanitizedMessages });
     } catch (error) {
         console.error("Error fetching messages:", error);
         return res.status(500).json({ message: "Server Error", error: error.message });
@@ -227,8 +238,8 @@ exports.getDirectMessages = async (req, res) => {
         const messages = await Message.find({
             conversation: conversation._id
         })
-        .populate('sender', 'name email profileImage')
-        .sort({ createdAt: 1 });
+            .populate('sender', 'name email profileImage')
+            .sort({ createdAt: 1 });
 
         // Process messages: if an ephemeral message has been marked as viewed,
         // remove the image URL for both sender and receiver.
@@ -277,7 +288,7 @@ exports.markEphemeralAsViewed = async (req, res) => {
         }
 
         // For direct messages, only allow the receiver to mark as viewed
-        if (!conversation.isGroupChat && message.receiver && 
+        if (!conversation.isGroupChat && message.receiver &&
             message.receiver.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: "Only the receiver can mark this photo as viewed." });
         }
@@ -329,7 +340,7 @@ exports.markMessagesAsSeen = async (req, res) => {
         }
 
         let updateQuery = { conversation: conversationId };
-        
+
         if (messageIds && messageIds.length > 0) {
             updateQuery._id = { $in: messageIds };
         }
@@ -339,10 +350,10 @@ exports.markMessagesAsSeen = async (req, res) => {
             // For group chats, add to seenBy array
             await Message.updateMany(
                 { ...updateQuery, sender: { $ne: userId } },
-                { 
-                    $addToSet: { 
-                        seenBy: { user: userId, seenAt: new Date() } 
-                    } 
+                {
+                    $addToSet: {
+                        seenBy: { user: userId, seenAt: new Date() }
+                    }
                 }
             );
         } else {
