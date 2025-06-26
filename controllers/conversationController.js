@@ -13,7 +13,8 @@ exports.getConversations = async (req, res) => {
         const userId = req.user._id;
 
         const conversations = await Conversation.find({
-            participants: userId
+            participants: userId,
+            visibleTo: userId  // Only show conversations that are visible to this user
         })
         .populate('participants', 'name email profileImage')
         .populate('lastMessage')
@@ -79,7 +80,24 @@ exports.createConversation = async (req, res) => {
             }).populate('participants', 'name email profileImage');
 
             if (existingConversation) {
-                return res.json({ conversation: existingConversation });
+                // Format existing conversation for frontend
+                const otherParticipants = existingConversation.participants.filter(
+                    p => p._id.toString() !== userId.toString()
+                );
+
+                const formattedExistingConversation = {
+                    _id: existingConversation._id,
+                    isGroupChat: existingConversation.isGroupChat,
+                    name: existingConversation.isGroupChat ? existingConversation.groupName : otherParticipants[0]?.name,
+                    image: existingConversation.isGroupChat ? existingConversation.groupImage : otherParticipants[0]?.profileImage,
+                    participants: existingConversation.participants,
+                    lastMessage: existingConversation.lastMessage,
+                    lastActivity: existingConversation.lastActivity,
+                    createdAt: existingConversation.createdAt,
+                    updatedAt: existingConversation.updatedAt
+                };
+
+                return res.json({ conversation: formattedExistingConversation });
             }
         }
 
@@ -92,7 +110,11 @@ exports.createConversation = async (req, res) => {
         const conversationData = {
             participants,
             isGroupChat,
-            groupName: isGroupChat ? groupName : null
+            groupName: isGroupChat ? groupName : null,
+            initiatedBy: userId,
+            // Initially, only the initiator can see the conversation
+            // Other participants will see it only after first message is sent
+            visibleTo: [userId]
         };
 
         const conversation = new Conversation(conversationData);
@@ -101,9 +123,26 @@ exports.createConversation = async (req, res) => {
         const populatedConversation = await Conversation.findById(conversation._id)
             .populate('participants', 'name email profileImage');
 
+        // Format conversation for frontend (same as in getConversations)
+        const otherParticipants = populatedConversation.participants.filter(
+            p => p._id.toString() !== userId.toString()
+        );
+
+        const formattedConversation = {
+            _id: populatedConversation._id,
+            isGroupChat: populatedConversation.isGroupChat,
+            name: populatedConversation.isGroupChat ? populatedConversation.groupName : otherParticipants[0]?.name,
+            image: populatedConversation.isGroupChat ? populatedConversation.groupImage : otherParticipants[0]?.profileImage,
+            participants: populatedConversation.participants,
+            lastMessage: populatedConversation.lastMessage,
+            lastActivity: populatedConversation.lastActivity,
+            createdAt: populatedConversation.createdAt,
+            updatedAt: populatedConversation.updatedAt
+        };
+
         res.status(201).json({ 
             message: "Conversation created successfully", 
-            conversation: populatedConversation 
+            conversation: formattedConversation 
         });
     } catch (error) {
         console.error("Error in createConversation:", error);

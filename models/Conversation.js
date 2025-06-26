@@ -25,6 +25,17 @@ const conversationSchema = new mongoose.Schema({
   lastActivity: { 
     type: Date, 
     default: Date.now 
+  },
+  // Track which participants should see this conversation
+  // Only show to participants after first message is sent
+  visibleTo: [{ 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: "User" 
+  }],
+  // Track who initiated the conversation
+  initiatedBy: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: "User" 
   }
 }, { timestamps: true });
 
