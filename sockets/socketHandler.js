@@ -269,6 +269,15 @@ module.exports = (io) => {
                     lastActivity: new Date()
                 });
 
+                // IMPORTANT: Broadcast a global update event to ALL connected clients
+                // This ensures everyone's sidebar gets updated
+                io.emit("globalUpdate", {
+                    type: "newMessage",
+                    conversationId: data.conversationId,
+                    timestamp: new Date()
+                });
+                console.log("Sent globalUpdate event to all clients");
+
                 // Note: newConversationVisible event is now handled in the message controller
                 // for better reliability and direct user targeting
             } catch (err) {
@@ -283,13 +292,29 @@ module.exports = (io) => {
                     console.error("Invalid sendDirectMessage data received:", data);
                     return;
                 }
+
+                // Get receiver sockets
                 const receiverSockets = getUserSockets(data.receiver, io);
+
+                // Send to receiver
                 if (receiverSockets.length > 0) {
-                    receiverSockets.forEach(sock => sock.emit("messageReceived", data));
+                    receiverSockets.forEach(sock => {
+                        // Send the message to the receiver
+                        sock.emit("messageReceived", data);
+                    });
                     console.log(`Direct message from ${data.sender} delivered to ${data.receiver}`);
                 } else {
                     console.warn(`Receiver ${data.receiver} is not connected.`);
                 }
+
+                // IMPORTANT: Broadcast a global update event to ALL connected clients
+                // This ensures everyone's sidebar gets updated
+                io.emit("globalUpdate", {
+                    type: "newMessage",
+                    timestamp: new Date()
+                });
+                console.log("Sent globalUpdate event to all clients");
+
             } catch (err) {
                 console.error("Error in sendDirectMessage event handler:", err);
             }
@@ -364,6 +389,23 @@ module.exports = (io) => {
                 delete connectedUsers[userId];
                 delete socketToUserId[socket.id];
                 removeUserSocket(userId, socket.id);
+            }
+        });
+
+        // Handle request to refresh conversations
+        socket.on("requestConversationsRefresh", () => {
+            try {
+                const userId = socketToUserId[socket.id];
+                if (!userId) {
+                    console.error("requestConversationsRefresh received from unauthenticated socket");
+                    return;
+                }
+
+                // Emit an event back to the same client to refresh conversations
+                socket.emit("refreshConversations");
+                console.log(`Sent refreshConversations event to user ${userId}`);
+            } catch (err) {
+                console.error("Error in requestConversationsRefresh event handler:", err);
             }
         });
 

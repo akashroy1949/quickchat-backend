@@ -62,9 +62,52 @@ exports.sendMessage = async (req, res) => {
             if (!conversation) {
                 conversation = new Conversation({
                     participants: [senderId, receiver],
-                    isGroupChat: false
+                    isGroupChat: false,
+                    visibleTo: [senderId, receiver] // Make it visible to both users immediately
                 });
                 await conversation.save();
+
+                // Notify both users about the new conversation
+                const io = req.app.get('io');
+                if (io) {
+                    // Get all sockets for both users
+                    const { getUserSockets } = require('../sockets/userSocketManager');
+
+                    // Notify receiver
+                    const receiverSockets = getUserSockets(receiver, io);
+                    receiverSockets.forEach(socket => {
+                        socket.emit("newConversationCreated", {
+                            conversationId: conversation._id.toString(),
+                            participants: [senderId, receiver],
+                            isGroupChat: false
+                        });
+
+                        // Join the socket to the conversation room
+                        socket.join(conversation._id.toString());
+                    });
+
+                    // Notify sender
+                    const senderSockets = getUserSockets(senderId, io);
+                    senderSockets.forEach(socket => {
+                        socket.emit("newConversationCreated", {
+                            conversationId: conversation._id.toString(),
+                            participants: [senderId, receiver],
+                            isGroupChat: false
+                        });
+
+                        // Join the socket to the conversation room
+                        socket.join(conversation._id.toString());
+                    });
+
+                    // IMPORTANT: Broadcast a global update event to ALL connected clients
+                    // This ensures everyone's sidebar gets updated
+                    io.emit("globalUpdate", {
+                        type: "newConversation",
+                        conversationId: conversation._id.toString(),
+                        timestamp: new Date()
+                    });
+                    console.log("Sent globalUpdate event to all clients for new conversation");
+                }
             }
         }
 
@@ -79,14 +122,31 @@ exports.sendMessage = async (req, res) => {
             const fileExtension = path.extname(req.file.originalname).toLowerCase();
             const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
 
+            // Always store the original filename, size and type for all uploads
+            // First check if they were explicitly provided in the request body (from frontend)
+            fileName = req.body.fileName || req.file.originalname;
+            fileSize = req.body.fileSize ? parseInt(req.body.fileSize) : req.file.size;
+            fileType = req.body.fileType || req.file.mimetype;
+
             if (imageExtensions.includes(fileExtension)) {
                 imageUrl = `/uploads/${req.file.filename}`;
+                // For images, we still want to know it's an image file
+                console.log(`Processing image upload: ${fileName}, size: ${fileSize}, type: ${fileType}`);
             } else {
                 fileUrl = `/uploads/${req.file.filename}`;
-                fileName = req.file.originalname;
-                fileSize = req.file.size;
-                fileType = req.file.mimetype;
+                console.log(`Processing file upload: ${fileName}, size: ${fileSize}, type: ${fileType}`);
             }
+
+            // Log the complete file data
+            console.log("File upload details:", {
+                originalName: req.file.originalname,
+                fileName: fileName,
+                fileSize: fileSize,
+                fileType: fileType,
+                isImage: imageExtensions.includes(fileExtension),
+                imageUrl: imageUrl,
+                fileUrl: fileUrl
+            });
         }
 
         // Prepare message data
@@ -162,7 +222,7 @@ exports.sendMessage = async (req, res) => {
                 });
 
                 console.log(`✅ Successfully emitted newConversationVisible to ${newlyVisibleUsers.length} users`);
-                
+
                 // Also broadcast to all clients as a fallback
                 io.emit("conversationBecameVisible", {
                     conversationId: conversationId,
@@ -170,7 +230,7 @@ exports.sendMessage = async (req, res) => {
                     isNewlyVisible: true
                 });
                 console.log(`📡 Broadcasted conversationBecameVisible event as fallback`);
-                
+
             } else {
                 console.error(`❌ Socket.io instance not found in req.app`);
             }
@@ -182,9 +242,28 @@ exports.sendMessage = async (req, res) => {
         const populatedMessage = await Message.findById(message._id)
             .populate('sender', 'name email profileImage');
 
+        // Create a response object with explicit file metadata to ensure it's included
+        const responseData = {
+            ...populatedMessage.toObject(),
+            fileName: fileName,
+            fileSize: fileSize,
+            fileType: fileType,
+            // Include these flags to make it easier for the frontend
+            hasImage: !!imageUrl,
+            hasFile: !!fileUrl
+        };
+
+        console.log("Sending message response with file data:", {
+            id: responseData._id,
+            content: responseData.content,
+            fileName: responseData.fileName,
+            hasImage: responseData.hasImage,
+            hasFile: responseData.hasFile
+        });
+
         return res.status(201).json({
             message: "Message sent successfully",
-            data: populatedMessage
+            data: responseData
         });
     } catch (error) {
         console.error("Error in sendMessage:", error);
@@ -249,24 +328,42 @@ exports.getMessages = async (req, res) => {
         // Return messages with delivery and seen status
         res.json({
             success: true,
-            messages: messages.map(msg => ({
-                _id: msg._id,
-                content: msg.content,
-                sender: msg.sender,
-                conversation: msg.conversation,
-                image: msg.image,
-                file: msg.file,
-                fileName: msg.fileName,
-                fileSize: msg.fileSize,
-                fileType: msg.fileType,
-                publicId: msg.publicId,
-                delivered: msg.delivered,
-                deliveredAt: msg.deliveredAt,
-                seen: msg.seen,
-                seenAt: msg.seenAt,
-                seenBy: msg.seenBy,
-                createdAt: msg.createdAt
-            }))
+            messages: messages.map(msg => {
+                // Create a message object with all properties
+                const messageObj = {
+                    _id: msg._id,
+                    content: msg.content,
+                    sender: msg.sender,
+                    conversation: msg.conversation,
+                    image: msg.image,
+                    file: msg.file,
+                    fileName: msg.fileName,
+                    fileSize: msg.fileSize,
+                    fileType: msg.fileType,
+                    publicId: msg.publicId,
+                    delivered: msg.delivered,
+                    deliveredAt: msg.deliveredAt,
+                    seen: msg.seen,
+                    seenAt: msg.seenAt,
+                    seenBy: msg.seenBy,
+                    createdAt: msg.createdAt,
+                    // Add these flags to make it easier for the frontend
+                    hasImage: !!msg.image,
+                    hasFile: !!msg.file
+                };
+
+                // For debugging, log file/image messages
+                if (msg.image || msg.file) {
+                    console.log("Returning message with attachment:", {
+                        id: msg._id,
+                        hasImage: !!msg.image,
+                        hasFile: !!msg.file,
+                        fileName: msg.fileName
+                    });
+                }
+
+                return messageObj;
+            })
         });
     } catch (error) {
         console.error("Error fetching messages:", error);
