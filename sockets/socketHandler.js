@@ -6,11 +6,11 @@
 
 const Message = require("../models/Message");
 const Conversation = require("../models/Conversation");
-const { addUserSocket, removeUserSocket, getUserSocket, userSockets } = require("./userSocketManager");
+const { addUserSocket, removeUserSocket, getUserSockets, userSockets } = require("./userSocketManager");
 
 module.exports = (io) => {
     // In-memory map to track connected users by their userId
-    const connectedUsers = {};
+    const connectedUsers = {}; // (legacy, can be removed in future)
     // Reverse map to track userId by socket id for O(1) removal
     const socketToUserId = {};
 
@@ -18,15 +18,48 @@ module.exports = (io) => {
         console.log(`Socket connected: ${socket.id}`);
 
         // Handle user authentication and connection
-        socket.on("userConnected", (userId) => {
+        socket.on("userConnected", async (userId) => {
             if (!userId) {
                 console.error("userConnected event received with invalid userId");
                 return;
             }
-            connectedUsers[userId] = socket.id;
+            connectedUsers[userId] = socket.id; // (legacy, can be removed in future)
             socketToUserId[socket.id] = userId;
             addUserSocket(userId, socket.id);
             console.log(`User connected: ${userId}, socket id: ${socket.id}`);
+
+            // Automatically join user to all their conversation rooms
+            try {
+                const Conversation = require('../models/Conversation');
+
+                // First, get all conversations where user is a participant
+                const allUserConversations = await Conversation.find({
+                    participants: userId
+                });
+
+                console.log(`🔍 Found ${allUserConversations.length} total conversations for user ${userId}`);
+
+                // Filter conversations that should be visible to this user
+                const visibleConversations = allUserConversations.filter(conversation => {
+                    // If visibleTo doesn't exist, it's an old conversation - make it visible
+                    if (!conversation.visibleTo || conversation.visibleTo.length === 0) {
+                        return true;
+                    }
+                    // If visibleTo exists, check if user is in the array
+                    return conversation.visibleTo.some(visibleUserId => visibleUserId.toString() === userId.toString());
+                });
+
+                console.log(`👁️ ${visibleConversations.length} conversations are visible to user ${userId}`);
+
+                visibleConversations.forEach(conversation => {
+                    socket.join(conversation._id.toString());
+                    console.log(`🔗 Auto-joined user ${userId} to conversation: ${conversation._id}`);
+                });
+
+                console.log(`✅ User ${userId} successfully joined ${visibleConversations.length} conversation rooms`);
+            } catch (error) {
+                console.error(`❌ Error auto-joining user ${userId} to conversations:`, error);
+            }
         });
 
         // Handle message delivered event
@@ -37,10 +70,10 @@ module.exports = (io) => {
                     return;
                 }
 
-                console.log('Marking messages as delivered:', { conversationId, messageIds, deliveredToUserId });
+                console.log('📨 Marking messages as delivered:', { conversationId, messageIds: messageIds.length, deliveredToUserId });
 
                 // Update messages in database
-                await Message.updateMany(
+                const updateResult = await Message.updateMany(
                     {
                         _id: { $in: messageIds },
                         conversation: conversationId,
@@ -52,10 +85,13 @@ module.exports = (io) => {
                     }
                 );
 
-                // Emit to message senders (not the user who marked it as delivered)
+                console.log(`📨 Updated ${updateResult.modifiedCount} messages as delivered in database`);
+
+                // Get the updated messages to emit status updates
                 const messages = await Message.find({
                     _id: { $in: messageIds },
-                    conversation: conversationId
+                    conversation: conversationId,
+                    delivered: true // Only get messages that are now delivered
                 }).populate('sender');
 
                 // Group messages by sender and emit to each sender
@@ -70,16 +106,36 @@ module.exports = (io) => {
                     }
                 });
 
-                // Emit to each sender
+                // Emit to each sender (all sockets) - send batch event for better performance
                 Object.keys(senderGroups).forEach(senderId => {
-                    const senderSocket = getUserSocket(senderId, io);
-                    if (senderSocket) {
-                        senderSocket.emit('messageDelivered', {
-                            conversationId,
-                            messageIds: senderGroups[senderId],
-                            deliveredToUserId
-                        });
+                    const senderSockets = getUserSockets(senderId, io);
+                    console.log(`🔍 Found ${senderSockets.length} sockets for sender ${senderId}`);
+
+                    if (senderSockets.length === 0) {
+                        console.log(`⚠️ No sockets found for sender ${senderId} - user may be offline`);
+                        return;
                     }
+
+                    senderSockets.forEach(senderSocket => {
+                        // Send batch messageDelivered event for better performance
+                        senderSocket.emit('messagesDelivered', {
+                            conversationId,
+                            messageIds: senderGroups[senderId].map(id => id.toString()),
+                            deliveredToUserId,
+                            deliveredAt: new Date().toISOString()
+                        });
+                        console.log(`📤 Emitted messagesDelivered for ${senderGroups[senderId].length} messages to sender ${senderId}`);
+
+                        // Also emit individual events for backward compatibility
+                        senderGroups[senderId].forEach(messageId => {
+                            senderSocket.emit('messageDelivered', {
+                                conversationId,
+                                messageId: messageId.toString(),
+                                deliveredToUserId,
+                                deliveredAt: new Date().toISOString()
+                            });
+                        });
+                    });
                 });
 
             } catch (error) {
@@ -95,10 +151,10 @@ module.exports = (io) => {
                     return;
                 }
 
-                console.log('Marking messages as seen:', { conversationId, seenByUserId, messageIds });
+                console.log('👁️ Marking messages as seen:', { conversationId, seenByUserId, messageIds: messageIds.length });
 
                 // Update messages in database
-                await Message.updateMany(
+                const updateResult = await Message.updateMany(
                     {
                         _id: { $in: messageIds },
                         conversation: conversationId,
@@ -117,10 +173,13 @@ module.exports = (io) => {
                     }
                 );
 
-                // Emit to message senders (not the user who marked it as seen)
+                console.log(`👁️ Updated ${updateResult.modifiedCount} messages as seen in database`);
+
+                // Get the updated messages to emit status updates
                 const messages = await Message.find({
                     _id: { $in: messageIds },
-                    conversation: conversationId
+                    conversation: conversationId,
+                    seen: true // Only get messages that are now seen
                 }).populate('sender');
 
                 // Group messages by sender and emit to each sender
@@ -135,16 +194,34 @@ module.exports = (io) => {
                     }
                 });
 
-                // Emit to each sender
+                // Emit to each sender (all sockets) - send batch event for better performance
                 Object.keys(senderGroups).forEach(senderId => {
-                    const senderSocket = getUserSocket(senderId, io);
-                    if (senderSocket) {
+                    const senderSockets = getUserSockets(senderId, io);
+                    console.log(`🔍 Found ${senderSockets.length} sockets for sender ${senderId}`);
+
+                    if (senderSockets.length === 0) {
+                        console.log(`⚠️ No sockets found for sender ${senderId} - user may be offline`);
+                        return;
+                    }
+
+                    senderSockets.forEach(senderSocket => {
+                        // Send batch messagesSeen event for better performance
+                        senderSocket.emit('messagesSeen', {
+                            conversationId,
+                            messageIds: senderGroups[senderId].map(id => id.toString()),
+                            seenByUserId,
+                            seenAt: new Date().toISOString()
+                        });
+                        console.log(`📤 Emitted messagesSeen for ${senderGroups[senderId].length} messages to sender ${senderId}`);
+
+                        // Also emit individual events for backward compatibility
                         senderSocket.emit('messageSeen', {
                             conversationId,
-                            messageIds: senderGroups[senderId],
-                            seenByUserId
+                            messageIds: senderGroups[senderId].map(id => id.toString()),
+                            seenByUserId,
+                            seenAt: new Date().toISOString()
                         });
-                    }
+                    });
                 });
 
             } catch (error) {
@@ -180,16 +257,20 @@ module.exports = (io) => {
                     return;
                 }
 
-                // Emit to all users in the conversation room
+                // Emit to all users in the conversation room (excluding sender)
                 socket.to(data.conversationId).emit("messageReceived", data);
                 console.log(`Message from ${data.sender} sent to conversation ${data.conversationId}`);
 
-                // Also emit conversation update for chat list
-                socket.to(data.conversationId).emit("conversationUpdated", {
+                // Emit conversation update to ALL users in the conversation room (including sender)
+                // This ensures the sender's sidebar also gets updated
+                io.to(data.conversationId).emit("conversationUpdated", {
                     conversationId: data.conversationId,
                     lastMessage: data,
                     lastActivity: new Date()
                 });
+
+                // Note: newConversationVisible event is now handled in the message controller
+                // for better reliability and direct user targeting
             } catch (err) {
                 console.error("Error in sendMessage event handler:", err);
             }
@@ -202,9 +283,9 @@ module.exports = (io) => {
                     console.error("Invalid sendDirectMessage data received:", data);
                     return;
                 }
-                const receiverSocketId = connectedUsers[data.receiver];
-                if (receiverSocketId) {
-                    io.to(receiverSocketId).emit("messageReceived", data);
+                const receiverSockets = getUserSockets(data.receiver, io);
+                if (receiverSockets.length > 0) {
+                    receiverSockets.forEach(sock => sock.emit("messageReceived", data));
                     console.log(`Direct message from ${data.sender} delivered to ${data.receiver}`);
                 } else {
                     console.warn(`Receiver ${data.receiver} is not connected.`);
@@ -253,10 +334,8 @@ module.exports = (io) => {
                     console.error("Invalid directTyping data received:", data);
                     return;
                 }
-                const receiverSocketId = connectedUsers[data.receiver];
-                if (receiverSocketId) {
-                    io.to(receiverSocketId).emit("typing", { sender: data.sender });
-                }
+                const receiverSockets = getUserSockets(data.receiver, io);
+                receiverSockets.forEach(sock => sock.emit("typing", { sender: data.sender }));
             } catch (err) {
                 console.error("Error in directTyping event handler:", err);
             }
@@ -269,10 +348,8 @@ module.exports = (io) => {
                     console.error("Invalid directStopTyping data received:", data);
                     return;
                 }
-                const receiverSocketId = connectedUsers[data.receiver];
-                if (receiverSocketId) {
-                    io.to(receiverSocketId).emit("stopTyping", { sender: data.sender });
-                }
+                const receiverSockets = getUserSockets(data.receiver, io);
+                receiverSockets.forEach(sock => sock.emit("stopTyping", { sender: data.sender }));
             } catch (err) {
                 console.error("Error in directStopTyping event handler:", err);
             }
