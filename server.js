@@ -101,6 +101,8 @@ const io = new Server(server, {
   }
 });
 
+// Make io instance available to routes
+app.set('io', io);
 
 socketHandler(io);
 

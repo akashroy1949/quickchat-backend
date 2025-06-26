@@ -111,7 +111,72 @@ exports.sendMessage = async (req, res) => {
         // Update conversation's last message and activity
         conversation.lastMessage = message._id;
         conversation.lastActivity = new Date();
+
+        // Make conversation visible to all participants when first message is sent
+        // This ensures the receiver only sees the chat after a message is actually sent
+        const allParticipants = conversation.participants.map(p => p.toString());
+        const currentVisibleTo = conversation.visibleTo ? conversation.visibleTo.map(p => p.toString()) : [];
+
+        // Find participants who couldn't see the conversation before
+        const newlyVisibleUsers = allParticipants.filter(participantId =>
+            !currentVisibleTo.includes(participantId)
+        );
+
+        // Add any participants who can't see the conversation yet
+        const newVisibleTo = [...new Set([...currentVisibleTo, ...allParticipants])];
+        conversation.visibleTo = newVisibleTo;
+
         await conversation.save();
+
+        // Emit newConversationVisible event to newly visible users
+        if (newlyVisibleUsers.length > 0) {
+            const io = req.app.get('io');
+            if (io) {
+                console.log(`🎯 About to emit newConversationVisible to users:`, newlyVisibleUsers);
+
+                newlyVisibleUsers.forEach(userId => {
+                    // Emit to all sockets of this user
+                    const { getUserSockets } = require('../sockets/userSocketManager');
+                    const userSockets = getUserSockets(userId, io);
+
+                    console.log(`🔍 Found ${userSockets.length} sockets for user ${userId}`);
+
+                    if (userSockets.length === 0) {
+                        console.log(`⚠️ No sockets found for user ${userId} - user may be offline`);
+                        return;
+                    }
+
+                    userSockets.forEach(userSocket => {
+                        console.log(`📤 Emitting newConversationVisible to socket ${userSocket.id} for user ${userId}`);
+
+                        userSocket.emit("newConversationVisible", {
+                            conversationId: conversationId,
+                            isNewlyVisible: true,
+                            message: "New conversation is now visible"
+                        });
+
+                        // Also make sure they join the conversation room
+                        userSocket.join(conversationId);
+                        console.log(`🔗 Added user ${userId} to conversation room: ${conversationId}`);
+                    });
+                });
+
+                console.log(`✅ Successfully emitted newConversationVisible to ${newlyVisibleUsers.length} users`);
+                
+                // Also broadcast to all clients as a fallback
+                io.emit("conversationBecameVisible", {
+                    conversationId: conversationId,
+                    newlyVisibleUsers: newlyVisibleUsers,
+                    isNewlyVisible: true
+                });
+                console.log(`📡 Broadcasted conversationBecameVisible event as fallback`);
+                
+            } else {
+                console.error(`❌ Socket.io instance not found in req.app`);
+            }
+        } else {
+            console.log(`ℹ️ No newly visible users for conversation ${conversationId}`);
+        }
 
         // Populate sender info for response
         const populatedMessage = await Message.findById(message._id)
@@ -357,10 +422,13 @@ exports.markMessagesAsSeen = async (req, res) => {
                 }
             );
         } else {
-            // For direct messages, use isSeen field
+            // For direct messages, use seen field (consistent with socket handler)
             await Message.updateMany(
                 { ...updateQuery, sender: { $ne: userId } },
-                { isSeen: true }
+                {
+                    seen: true,
+                    seenAt: new Date()
+                }
             );
         }
 
