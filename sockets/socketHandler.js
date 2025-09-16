@@ -285,6 +285,78 @@ module.exports = (io) => {
             }
         });
 
+        // Handle typing indicators
+        socket.on("typing", (data) => {
+            if (!(data?.sender && data?.conversationId)) {
+                console.error("Invalid typing data received:", data);
+                return;
+            }
+            
+            // Broadcast typing event to all users in the conversation except the sender
+            socket.to(data.conversationId).emit("typing", data);
+            console.log(`Typing indicator from ${data.sender} sent to conversation ${data.conversationId}`);
+        });
+
+        // Handle stop typing indicators
+        socket.on("stopTyping", (data) => {
+            if (!(data?.sender && data?.conversationId)) {
+                console.error("Invalid stopTyping data received:", data);
+                return;
+            }
+            
+            // Broadcast stop typing event to all users in the conversation except the sender
+            socket.to(data.conversationId).emit("stopTyping", data);
+            console.log(`Stop typing indicator from ${data.sender} sent to conversation ${data.conversationId}`);
+        });
+        
+        // Handle message edited events
+        socket.on("messageEdited", (data) => {
+            if (!(data?.messageId && data?.conversation)) {
+                console.error("Invalid messageEdited data received:", data);
+                return;
+            }
+            
+            // Broadcast to all users in the conversation
+            io.to(data.conversation).emit("messageEdited", data);
+            console.log(`Message ${data.messageId} edited in conversation ${data.conversation}`);
+        });
+        
+        // Handle message deleted events
+        socket.on("messageDeleted", (data) => {
+            if (!(data?.messageId && data?.conversation)) {
+                console.error("Invalid messageDeleted data received:", data);
+                return;
+            }
+            
+            // Broadcast to all users in the conversation
+            io.to(data.conversation).emit("messageDeleted", data);
+            console.log(`Message ${data.messageId} deleted in conversation ${data.conversation}`);
+        });
+        
+        // Handle message pinned events
+        socket.on("messagePinned", (data) => {
+            if (!(data?.messageId && data?.conversation)) {
+                console.error("Invalid messagePinned data received:", data);
+                return;
+            }
+            
+            // Broadcast to all users in the conversation
+            io.to(data.conversation).emit("messagePinned", data);
+            console.log(`Message ${data.messageId} ${data.isPinned ? 'pinned' : 'unpinned'} in conversation ${data.conversation}`);
+        });
+        
+        // Handle message reaction events
+        socket.on("messageReaction", (data) => {
+            if (!(data?.messageId && data?.conversation)) {
+                console.error("Invalid messageReaction data received:", data);
+                return;
+            }
+            
+            // Broadcast to all users in the conversation
+            io.to(data.conversation).emit("messageReaction", data);
+            console.log(`Reaction added to message ${data.messageId} in conversation ${data.conversation}`);
+        });
+
         // Handle direct messages (backward compatibility)
         socket.on("sendDirectMessage", (data) => {
             try {

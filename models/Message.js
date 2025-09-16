@@ -23,7 +23,19 @@ const messageSchema = new mongoose.Schema(
             seenAt: { type: Date, default: Date.now }
         }],
         isEphemeral: { type: Boolean, default: false }, // True if this message is a one-time view photo
-        ephemeralViewed: { type: Boolean, default: false } // Set to true once the receiver views the photo
+        ephemeralViewed: { type: Boolean, default: false }, // Set to true once the receiver views the photo
+        isEdited: { type: Boolean, default: false }, // Indicates if the message has been edited
+        editedAt: { type: Date }, // When the message was last edited
+        isPinned: { type: Boolean, default: false }, // Indicates if the message is pinned
+        pinnedAt: { type: Date }, // When the message was pinned
+        pinnedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // Who pinned the message
+        isDeleted: { type: Boolean, default: false }, // Soft delete flag
+        deletedAt: { type: Date }, // When the message was deleted
+        reactions: [{ // Array of reactions to the message
+            emoji: { type: String, required: true }, // The emoji used for the reaction
+            user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }, // User who reacted
+            createdAt: { type: Date, default: Date.now } // When the reaction was added
+        }]
     },
     { timestamps: true } // Automatically adds createdAt and updatedAt fields
 );
@@ -31,5 +43,6 @@ const messageSchema = new mongoose.Schema(
 // Index for efficient queries
 messageSchema.index({ conversation: 1, createdAt: -1 });
 messageSchema.index({ sender: 1 });
+messageSchema.index({ isPinned: 1 }); // Index for pinned messages
 
 module.exports = mongoose.model("Message", messageSchema);

@@ -1,8 +1,11 @@
 const express = require("express");
-const { 
-    getConversations, 
-    createConversation, 
-    getConversationById 
+const {
+    getConversations,
+    createConversation,
+    getConversationById,
+    getChatStatistics,
+    exportChat,
+    deleteConversation
 } = require("../controllers/conversationController");
 const { protect } = require("../middleware/authMiddleware");
 
@@ -28,5 +31,26 @@ router.post("/", protect, createConversation);
  * @access  Private
  */
 router.get("/:id", protect, getConversationById);
+
+/**
+ * @route   GET /api/conversations/:id/statistics
+ * @desc    Get chat statistics for a conversation
+ * @access  Private
+ */
+router.get("/:id/statistics", protect, getChatStatistics);
+
+/**
+ * @route   GET /api/conversations/:id/export
+ * @desc    Export chat as PDF
+ * @access  Private
+ */
+router.get("/:id/export", protect, exportChat);
+
+/**
+ * @route   DELETE /api/conversations/:id
+ * @desc    Delete a conversation
+ * @access  Private
+ */
+router.delete("/:id", protect, deleteConversation);
 
 module.exports = router;

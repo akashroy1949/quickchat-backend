@@ -2,6 +2,9 @@ const mongoose = require("mongoose");
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const User = require("../models/User");
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
 
 /**
  * @desc    Get all conversations for the authenticated user
@@ -176,6 +179,208 @@ exports.getConversationById = async (req, res) => {
         res.json({ conversation });
     } catch (error) {
         console.error("Error in getConversationById:", error);
+        res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Get chat statistics for a conversation
+ * @route   GET /api/conversations/:id/statistics
+ * @access  Private
+ */
+exports.getChatStatistics = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid conversation ID" });
+        }
+
+        // Verify user is participant
+        const conversation = await Conversation.findOne({
+            _id: id,
+            participants: userId
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        // Get message statistics
+        const messages = await Message.find({ conversation: id })
+            .populate('sender', 'name')
+            .sort({ createdAt: 1 });
+
+        // Calculate statistics
+        const totalMessages = messages.length;
+        const totalParticipants = conversation.participants.length;
+
+        // Media statistics
+        const mediaMessages = messages.filter(msg => msg.image || msg.file);
+        const totalMedia = mediaMessages.length;
+
+        // Media by type
+        const mediaByType = {
+            images: messages.filter(msg => msg.image).length,
+            videos: messages.filter(msg => msg.file && msg.fileType?.startsWith('video/')).length,
+            audio: messages.filter(msg => msg.file && msg.fileType?.startsWith('audio/')).length,
+            files: messages.filter(msg => msg.file && !msg.fileType?.startsWith('video/') && !msg.fileType?.startsWith('audio/')).length
+        };
+
+        // Activity by date
+        const activityByDate = {};
+        messages.forEach(msg => {
+            const date = msg.createdAt.toISOString().split('T')[0];
+            activityByDate[date] = (activityByDate[date] || 0) + 1;
+        });
+
+        const activityByDateArray = Object.entries(activityByDate)
+            .map(([date, count]) => ({ date, count }))
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        // Media by date with details
+        const mediaByDate = mediaMessages.map(msg => ({
+            fileName: msg.fileName,
+            fileSize: msg.fileSize,
+            fileType: msg.fileType,
+            createdAt: msg.createdAt
+        }));
+
+        // First message date
+        const firstMessageDate = messages.length > 0 ? messages[0].createdAt : null;
+
+        const statistics = {
+            totalMessages,
+            totalMedia,
+            totalParticipants,
+            mediaByType,
+            activityByDate: activityByDateArray,
+            mediaByDate,
+            firstMessageDate,
+            conversationName: conversation.isGroupChat ? conversation.groupName : 'Direct Message',
+            isGroupChat: conversation.isGroupChat
+        };
+
+        res.json(statistics);
+    } catch (error) {
+        console.error("Error in getChatStatistics:", error);
+        res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Export chat as PDF
+ * @route   GET /api/conversations/:id/export
+ * @access  Private
+ */
+exports.exportChat = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { format = 'pdf' } = req.query;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid conversation ID" });
+        }
+
+        // Verify user is participant
+        const conversation = await Conversation.findOne({
+            _id: id,
+            participants: userId
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        // Get all messages
+        const messages = await Message.find({ conversation: id })
+            .populate('sender', 'name')
+            .sort({ createdAt: 1 });
+
+        // Create PDF
+        const doc = new PDFDocument();
+        const buffers = [];
+
+        doc.on('data', buffers.push.bind(buffers));
+        doc.on('end', () => {
+            const pdfData = Buffer.concat(buffers);
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="chat-export-${id}.pdf"`);
+            res.send(pdfData);
+        });
+
+        // PDF Header
+        doc.fontSize(20).text('Chat Export', { align: 'center' });
+        doc.moveDown();
+
+        const conversationName = conversation.isGroupChat ? conversation.groupName : 'Direct Message';
+        doc.fontSize(16).text(`Conversation: ${conversationName}`, { align: 'center' });
+        doc.fontSize(12).text(`Exported on: ${new Date().toLocaleString()}`, { align: 'center' });
+        doc.moveDown(2);
+
+        // Messages
+        messages.forEach((message, index) => {
+            const senderName = message.sender?.name || 'Unknown';
+            const timestamp = message.createdAt.toLocaleString();
+            const content = message.content || '[Media message]';
+
+            doc.fontSize(10).fillColor('gray').text(`${senderName} - ${timestamp}`);
+            doc.fontSize(12).fillColor('black').text(content);
+            doc.moveDown(0.5);
+
+            // Add page break every 20 messages
+            if ((index + 1) % 20 === 0) {
+                doc.addPage();
+            }
+        });
+
+        // Footer
+        doc.fontSize(8).fillColor('gray').text(`Total messages: ${messages.length}`, {
+            align: 'center'
+        });
+
+        doc.end();
+    } catch (error) {
+        console.error("Error in exportChat:", error);
+        res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Delete a conversation
+ * @route   DELETE /api/conversations/:id
+ * @access  Private
+ */
+exports.deleteConversation = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid conversation ID" });
+        }
+
+        // Verify user is participant
+        const conversation = await Conversation.findOne({
+            _id: id,
+            participants: userId
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found" });
+        }
+
+        // Delete all messages in the conversation
+        await Message.deleteMany({ conversation: id });
+
+        // Delete the conversation
+        await Conversation.findByIdAndDelete(id);
+
+        res.json({ message: "Conversation deleted successfully" });
+    } catch (error) {
+        console.error("Error in deleteConversation:", error);
         res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
