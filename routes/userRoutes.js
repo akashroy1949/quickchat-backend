@@ -1,8 +1,9 @@
 const express = require("express");
-const { 
-    getUserProfile, 
+const {
+    getUserProfile,
     getUserById,
     searchUsers,
+    getOnlineUsers,
     updateUserProfile,
     reportUser
 } = require("../controllers/userController");
@@ -24,6 +25,13 @@ router.get("/getProfile", protect, getUserProfile);
  * @access  Private
  */
 router.get("/search", protect, searchUsers);
+
+/**
+ * @route   GET /api/user/online
+ * @desc    Get list of online users
+ * @access  Private
+ */
+router.get("/online", protect, getOnlineUsers);
 
 /**
  * @route   GET /api/user/:id

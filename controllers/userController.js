@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const Report = require("../models/Report");
 const mongoose = require("mongoose");
+const { getAllConnectedUsers } = require("../sockets/userSocketManager");
 
 /**
  * @desc    Get authenticated user's profile
@@ -106,6 +107,43 @@ exports.updateUserProfile = async (req, res) => {
 };
 
 /**
+ * @desc    Get list of online users and last seen info for offline users
+ * @route   GET /api/user/online
+ * @access  Private
+ */
+exports.getOnlineUsers = async (req, res) => {
+    try {
+        // Get all connected user IDs from the socket manager
+        const onlineUserIds = getAllConnectedUsers();
+
+        // Get user details for online users
+        const onlineUsers = await User.find({
+            _id: { $in: onlineUserIds }
+        }).select("_id name email profileImage isOnline lastSeen");
+
+        // Get all users with their online status and last seen info
+        const allUsers = await User.find({})
+            .select("_id name email profileImage isOnline lastSeen")
+            .sort({ lastSeen: -1 });
+
+        res.json({
+            success: true,
+            onlineUsers: allUsers.map(user => ({
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                profileImage: user.profileImage,
+                isOnline: onlineUserIds.includes(user._id.toString()),
+                lastSeen: user.lastSeen
+            }))
+        });
+    } catch (error) {
+        console.error("Error in getOnlineUsers:", error);
+        res.status(500).json({ message: "Server Error" });
+    }
+};
+
+/**
  * @desc    Report a user
  * @route   POST /api/user/:id/report
  * @access  Private
@@ -135,9 +173,9 @@ exports.reportUser = async (req, res) => {
         // Validate reason
         const validReasons = ['spam', 'harassment', 'inappropriate_content', 'fake_profile', 'other'];
         if (!reason || !validReasons.includes(reason)) {
-            return res.status(400).json({ 
-                message: "Valid reason is required", 
-                validReasons 
+            return res.status(400).json({
+                message: "Valid reason is required",
+                validReasons
             });
         }
 
@@ -148,8 +186,8 @@ exports.reportUser = async (req, res) => {
         });
 
         if (existingReport) {
-            return res.status(400).json({ 
-                message: "You have already reported this user" 
+            return res.status(400).json({
+                message: "You have already reported this user"
             });
         }
 
@@ -163,7 +201,7 @@ exports.reportUser = async (req, res) => {
 
         await report.save();
 
-        res.status(201).json({ 
+        res.status(201).json({
             message: "User reported successfully",
             reportId: report._id
         });

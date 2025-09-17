@@ -6,6 +6,7 @@
 
 const Message = require("../models/Message");
 const Conversation = require("../models/Conversation");
+const User = require("../models/User");
 const { addUserSocket, removeUserSocket, getUserSockets, userSockets } = require("./userSocketManager");
 
 module.exports = (io) => {
@@ -27,6 +28,21 @@ module.exports = (io) => {
             socketToUserId[socket.id] = userId;
             addUserSocket(userId, socket.id);
             console.log(`User connected: ${userId}, socket id: ${socket.id}`);
+
+            // Update user's online status in database
+            try {
+                await User.findByIdAndUpdate(userId, {
+                    isOnline: true,
+                    lastSeen: new Date()
+                });
+                console.log(`Updated online status for user ${userId}`);
+            } catch (error) {
+                console.error(`Error updating online status for user ${userId}:`, error);
+            }
+
+            // Broadcast user online status to all connected clients
+            io.emit("userOnline", { userId });
+            console.log(`Broadcasted userOnline event for user ${userId}`);
 
             // Automatically join user to all their conversation rooms
             try {
@@ -453,14 +469,30 @@ module.exports = (io) => {
         });
 
         // Handle socket disconnect
-        socket.on("disconnect", (reason) => {
+        socket.on("disconnect", async (reason) => {
             console.log(`Socket disconnected: ${socket.id}, Reason: ${reason}`);
             const userId = socketToUserId[socket.id];
             if (userId) {
                 console.log(`Removing user ${userId} from connected users.`);
+
+                // Update user's last seen time in database
+                try {
+                    await User.findByIdAndUpdate(userId, {
+                        lastSeen: new Date(),
+                        isOnline: false
+                    });
+                    console.log(`Updated last seen time for user ${userId}`);
+                } catch (error) {
+                    console.error(`Error updating last seen for user ${userId}:`, error);
+                }
+
                 delete connectedUsers[userId];
                 delete socketToUserId[socket.id];
                 removeUserSocket(userId, socket.id);
+
+                // Broadcast user offline status to all connected clients
+                io.emit("userOffline", { userId, lastSeen: new Date() });
+                console.log(`Broadcasted userOffline event for user ${userId}`);
             }
         });
 

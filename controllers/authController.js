@@ -24,7 +24,22 @@ exports.registerUser = async (req, res) => {
         user = new User({ name, email, password: hashedPassword });
         await user.save();
 
-        res.status(201).json({ message: "User registered successfully" });
+        // Generate Token for automatic login after registration
+        const token = generateToken(user._id);
+
+        // Return user data and token (excluding password)
+        const userData = {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            profileImage: user.profileImage
+        };
+
+        res.status(201).json({
+            message: "User registered successfully",
+            token,
+            data: userData
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server Error" });
@@ -47,7 +62,15 @@ exports.loginUser = async (req, res) => {
         // Generate Token
         const token = generateToken(user._id);
 
-        res.json({ token, userId: user._id });
+        // Return user data and token (excluding password)
+        const userData = {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            profileImage: user.profileImage
+        };
+
+        res.json({ token, userId: user._id, data: userData });
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "Server Error" });

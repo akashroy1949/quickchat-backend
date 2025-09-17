@@ -25,4 +25,8 @@ const getUserSockets = (userId, io) => {
         .filter(Boolean);
 };
 
-module.exports = { addUserSocket, removeUserSocket, getUserSockets, userSockets };
+const getAllConnectedUsers = () => {
+    return Array.from(userSockets.keys());
+};
+
+module.exports = { addUserSocket, removeUserSocket, getUserSockets, getAllConnectedUsers, userSockets };
