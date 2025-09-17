@@ -4,7 +4,11 @@ const {
     getMessages, 
     getDirectMessages,
     markEphemeralAsViewed,
-    markMessagesAsSeen
+    markMessagesAsSeen,
+    editMessage,
+    deleteMessage,
+    pinMessage,
+    reactToMessage
 } = require("../controllers/messageController");
 const { protect } = require("../middleware/authMiddleware");
 const upload = require("../middleware/uploadMiddleware");
@@ -46,5 +50,33 @@ router.put("/markEphemeral/:messageId", protect, markEphemeralAsViewed);
  * @access  Private
  */
 router.put("/markSeen", protect, markMessagesAsSeen);
+
+/**
+ * @route   PUT /api/messages/:messageId
+ * @desc    Edit a message (sender only)
+ * @access  Private
+ */
+router.put("/:messageId", protect, editMessage);
+
+/**
+ * @route   DELETE /api/messages/:messageId
+ * @desc    Delete a message (soft delete, sender only)
+ * @access  Private
+ */
+router.delete("/:messageId", protect, deleteMessage);
+
+/**
+ * @route   PUT /api/messages/:messageId/pin
+ * @desc    Pin or unpin a message
+ * @access  Private
+ */
+router.put("/:messageId/pin", protect, pinMessage);
+
+/**
+ * @route   PUT /api/messages/:messageId/react
+ * @desc    Add or remove a reaction to a message
+ * @access  Private
+ */
+router.put("/:messageId/react", protect, reactToMessage);
 
 module.exports = router;

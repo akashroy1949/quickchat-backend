@@ -5,12 +5,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "start:all": "npm-run-all --parallel tunnel docker nodemon",
+    "start:all": "npm-run-all --parallel tunnel nodemon",
     "tunnel": "cloudflared tunnel run quickchat_backend_v2",
-    "docker": "docker-compose up -d",
-    "nodemon": "nodemon server.js",
-    "stop:docker": "docker-compose down",
-    "restart:docker": "npm stop:docker && npm start:docker"
+    "nodemon": "nodemon server.js"
   },
   "keywords": [],
   "author": "",
@@ -27,7 +24,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.1",
     "multer": "^1.4.5-lts.1",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "pdfkit": "^0.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10",

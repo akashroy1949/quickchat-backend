@@ -322,7 +322,11 @@ exports.getMessages = async (req, res) => {
         const messages = await Message.find({
             conversation: conversation._id
         })
-            .populate('sender', 'name email')
+            .populate('sender', 'name email profileImage')
+            .populate({
+                path: 'reactions.user',
+                select: 'name email profileImage'
+            })
             .sort({ createdAt: 1 });
 
         // Return messages with delivery and seen status
@@ -346,6 +350,7 @@ exports.getMessages = async (req, res) => {
                     seen: msg.seen,
                     seenAt: msg.seenAt,
                     seenBy: msg.seenBy,
+                    reactions: msg.reactions, // Include reactions in the response
                     createdAt: msg.createdAt,
                     // Add these flags to make it easier for the frontend
                     hasImage: !!msg.image,
@@ -401,6 +406,10 @@ exports.getDirectMessages = async (req, res) => {
             conversation: conversation._id
         })
             .populate('sender', 'name email profileImage')
+            .populate({
+                path: 'reactions.user',
+                select: 'name email profileImage'
+            })
             .sort({ createdAt: 1 });
 
         // Process messages: if an ephemeral message has been marked as viewed,
@@ -409,6 +418,10 @@ exports.getDirectMessages = async (req, res) => {
             const msgObj = msg.toObject();
             if (msgObj.isEphemeral && msgObj.ephemeralViewed) {
                 msgObj.image = null;
+            }
+            // Ensure reactions are included in the response
+            if (!msgObj.reactions) {
+                msgObj.reactions = [];
             }
             return msgObj;
         });
@@ -533,5 +546,294 @@ exports.markMessagesAsSeen = async (req, res) => {
     } catch (error) {
         console.error("Error marking messages as seen:", error);
         res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Edit a message
+ * @route   PUT /api/messages/:messageId
+ * @access  Private
+ */
+exports.editMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { content } = req.body;
+        const userId = req.user._id;
+
+        // Validate message ID
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ message: "Invalid message ID format" });
+        }
+
+        // Find the message
+        const message = await Message.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if user is the sender of the message
+        if (message.sender.toString() !== userId.toString()) {
+            return res.status(403).json({ message: "You can only edit your own messages" });
+        }
+
+        // Check if message is deleted
+        if (message.isDeleted) {
+            return res.status(400).json({ message: "Cannot edit a deleted message" });
+        }
+
+        // Update the message
+        message.content = content;
+        message.isEdited = true;
+        message.editedAt = new Date();
+        await message.save();
+
+        // Get the updated message with populated sender
+        const updatedMessage = await Message.findById(messageId)
+            .populate('sender', 'name email profileImage');
+
+        // Emit socket event to notify all users in the conversation
+        const io = req.app.get('io');
+        if (io) {
+            io.to(message.conversation.toString()).emit('messageEdited', {
+                messageId: message._id,
+                content: message.content,
+                isEdited: message.isEdited,
+                editedAt: message.editedAt,
+                conversation: message.conversation
+            });
+        }
+
+        return res.status(200).json({
+            message: "Message updated successfully",
+            data: updatedMessage
+        });
+    } catch (error) {
+        console.error("Error editing message:", error);
+        return res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Delete a message (soft delete)
+ * @route   DELETE /api/messages/:messageId
+ * @access  Private
+ */
+exports.deleteMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const userId = req.user._id;
+
+        // Validate message ID
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ message: "Invalid message ID format" });
+        }
+
+        // Find the message
+        const message = await Message.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if user is the sender of the message
+        if (message.sender.toString() !== userId.toString()) {
+            return res.status(403).json({ message: "You can only delete your own messages" });
+        }
+
+        // Soft delete the message
+        message.isDeleted = true;
+        message.deletedAt = new Date();
+        await message.save();
+
+        // Emit socket event to notify all users in the conversation
+        const io = req.app.get('io');
+        if (io) {
+            io.to(message.conversation.toString()).emit('messageDeleted', {
+                messageId: message._id,
+                conversation: message.conversation
+            });
+        }
+
+        return res.status(200).json({
+            message: "Message deleted successfully"
+        });
+    } catch (error) {
+        console.error("Error deleting message:", error);
+        return res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Pin a message
+ * @route   PUT /api/messages/:messageId/pin
+ * @access  Private
+ */
+exports.pinMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const userId = req.user._id;
+
+        // Validate message ID
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ message: "Invalid message ID format" });
+        }
+
+        // Find the message
+        const message = await Message.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if message is deleted
+        if (message.isDeleted) {
+            return res.status(400).json({ message: "Cannot pin a deleted message" });
+        }
+
+        // Verify user is part of the conversation
+        const conversation = await Conversation.findOne({
+            _id: message.conversation,
+            participants: userId
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found or you're not a participant" });
+        }
+
+        // Toggle pin status
+        message.isPinned = !message.isPinned;
+
+        if (message.isPinned) {
+            message.pinnedAt = new Date();
+            message.pinnedBy = userId;
+        } else {
+            message.pinnedAt = null;
+            message.pinnedBy = null;
+        }
+
+        await message.save();
+
+        // Get the updated message with populated sender and pinnedBy
+        const updatedMessage = await Message.findById(messageId)
+            .populate('sender', 'name email profileImage')
+            .populate('pinnedBy', 'name email profileImage');
+
+        // Emit socket event to notify all users in the conversation
+        const io = req.app.get('io');
+        if (io) {
+            io.to(message.conversation.toString()).emit('messagePinned', {
+                messageId: message._id,
+                isPinned: message.isPinned,
+                pinnedAt: message.pinnedAt,
+                pinnedBy: message.pinnedBy,
+                conversation: message.conversation
+            });
+        }
+
+        return res.status(200).json({
+            message: message.isPinned ? "Message pinned successfully" : "Message unpinned successfully",
+            data: updatedMessage
+        });
+    } catch (error) {
+        console.error("Error pinning message:", error);
+        return res.status(500).json({ message: "Server Error", error: error.message });
+    }
+};
+
+/**
+ * @desc    Add or remove a reaction to a message
+ * @route   PUT /api/messages/:messageId/react
+ * @access  Private
+ */
+exports.reactToMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { emoji } = req.body;
+        const userId = req.user._id;
+
+        // Validate message ID
+        if (!mongoose.Types.ObjectId.isValid(messageId)) {
+            return res.status(400).json({ message: "Invalid message ID format" });
+        }
+
+        // Validate emoji
+        if (!emoji) {
+            return res.status(400).json({ message: "Emoji is required" });
+        }
+
+        // Find the message
+        const message = await Message.findById(messageId);
+        if (!message) {
+            return res.status(404).json({ message: "Message not found" });
+        }
+
+        // Check if message is deleted
+        if (message.isDeleted) {
+            return res.status(400).json({ message: "Cannot react to a deleted message" });
+        }
+
+        // Verify user is part of the conversation
+        const conversation = await Conversation.findOne({
+            _id: message.conversation,
+            participants: userId
+        });
+
+        if (!conversation) {
+            return res.status(404).json({ message: "Conversation not found or you're not a participant" });
+        }
+
+        // Check if user already has ANY reaction on this message
+        const existingReactionIndex = message.reactions.findIndex(
+            reaction => reaction.user.toString() === userId.toString()
+        );
+
+        let action;
+        if (existingReactionIndex !== -1) {
+            // User already has a reaction - replace it with the new emoji
+            if (message.reactions[existingReactionIndex].emoji === emoji) {
+                // Same emoji - remove the reaction
+                message.reactions.splice(existingReactionIndex, 1);
+                action = "removed";
+            } else {
+                // Different emoji - replace it
+                message.reactions[existingReactionIndex] = {
+                    emoji,
+                    user: userId,
+                    createdAt: new Date()
+                };
+                action = "updated";
+            }
+        } else {
+            // User doesn't have any reaction - add the new one
+            message.reactions.push({
+                emoji,
+                user: userId,
+                createdAt: new Date()
+            });
+            action = "added";
+        }
+
+        await message.save();
+
+        // Get the updated message with populated sender and reactions.user
+        const updatedMessage = await Message.findById(messageId)
+            .populate('sender', 'name email profileImage')
+            .populate('reactions.user', 'name email profileImage');
+
+        // Emit socket event to notify all users in the conversation
+        const io = req.app.get('io');
+        if (io) {
+            io.to(message.conversation.toString()).emit('messageReaction', {
+                messageId: message._id,
+                reactions: message.reactions,
+                conversation: message.conversation
+            });
+        }
+
+        return res.status(200).json({
+            message: `Reaction ${action} successfully`,
+            data: updatedMessage
+        });
+    } catch (error) {
+        console.error("Error reacting to message:", error);
+        return res.status(500).json({ message: "Server Error", error: error.message });
     }
 };
