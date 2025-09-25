@@ -207,8 +207,11 @@ exports.getChatStatistics = async (req, res) => {
             return res.status(404).json({ message: "Conversation not found" });
         }
 
-        // Get message statistics
-        const messages = await Message.find({ conversation: id })
+        // Get message statistics (exclude deleted messages)
+        const messages = await Message.find({
+            conversation: id,
+            isDeleted: false
+        })
             .populate('sender', 'name')
             .sort({ createdAt: 1 });
 
@@ -294,8 +297,11 @@ exports.exportChat = async (req, res) => {
             return res.status(404).json({ message: "Conversation not found" });
         }
 
-        // Get all messages
-        const messages = await Message.find({ conversation: id })
+        // Get all non-deleted messages
+        const messages = await Message.find({
+            conversation: id,
+            isDeleted: false
+        })
             .populate('sender', 'name')
             .sort({ createdAt: 1 });
 

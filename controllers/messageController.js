@@ -351,6 +351,13 @@ exports.getMessages = async (req, res) => {
                     seenAt: msg.seenAt,
                     seenBy: msg.seenBy,
                     reactions: msg.reactions, // Include reactions in the response
+                    isDeleted: msg.isDeleted,
+                    deletedAt: msg.deletedAt,
+                    isEdited: msg.isEdited,
+                    editedAt: msg.editedAt,
+                    isPinned: msg.isPinned,
+                    pinnedAt: msg.pinnedAt,
+                    pinnedBy: msg.pinnedBy,
                     createdAt: msg.createdAt,
                     // Add these flags to make it easier for the frontend
                     hasImage: !!msg.image,
@@ -642,7 +649,23 @@ exports.deleteMessage = async (req, res) => {
         // Soft delete the message
         message.isDeleted = true;
         message.deletedAt = new Date();
+        message.markModified('isDeleted');
+        message.markModified('deletedAt');
         await message.save();
+
+        // Check if this was the last message in the conversation
+        const conversation = await Conversation.findById(message.conversation);
+        if (conversation && conversation.lastMessage && conversation.lastMessage.toString() === message._id.toString()) {
+            // Find the most recent non-deleted message
+            const previousMessage = await Message.findOne({
+                conversation: message.conversation,
+                isDeleted: false
+            }).sort({ createdAt: -1 });
+
+            // Update conversation's lastMessage
+            conversation.lastMessage = previousMessage ? previousMessage._id : null;
+            await conversation.save();
+        }
 
         // Emit socket event to notify all users in the conversation
         const io = req.app.get('io');
